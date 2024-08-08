@@ -1,20 +1,24 @@
 package com.zjz.codesandbox.sandbox.impl;
 
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.lang.Snowflake;
 import cn.hutool.core.util.IdUtil;
+import cn.hutool.core.util.ObjectUtil;
 import com.zjz.codesandbox.constant.CmdConstant;
 import com.zjz.codesandbox.constant.FileConstant;
-import com.zjz.codesandbox.model.ExecuteRequest;
-import com.zjz.codesandbox.model.ExecuteResponse;
+import com.zjz.codesandbox.model.enums.CodeBoxExecuteEnum;
+import com.zjz.codesandbox.model.execute.ExecuteInfo;
+import com.zjz.codesandbox.model.execute.ExecuteRequest;
+import com.zjz.codesandbox.model.execute.ExecuteResponse;
+import com.zjz.codesandbox.model.process.ProcessMessage;
 import com.zjz.codesandbox.sandbox.CodeBox;
+import com.zjz.codesandbox.utils.ProcessUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,22 +27,37 @@ import java.util.List;
 @Slf4j
 public class JavaNativeCodeBox implements CodeBox {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         JavaNativeCodeBox javaNativeCodeBox = new JavaNativeCodeBox();
+        List<String> list = new ArrayList<>();
+        list.add("1 2");
+        String code = ResourceUtil.readStr("testcode/MemoryErrorCode/Main.java",StandardCharsets.UTF_8);
         ExecuteRequest java = ExecuteRequest.builder()
-                .code("public class Main {\n" +
-                        "    public static void main(String[] args) {\n" +
-                        "        System.ou.println(\"Hello World\");\n" +
-                        "    }\n" +
-                        "}")
-                .inputs(new ArrayList<>())
+                .code(code)
+                .inputs(list)
                 .language("java")
                 .build();
         javaNativeCodeBox.executeCode(java);
     }
 
+    /**
+     * 删除文件
+     * @param file 文件
+     */
+    private void deleteFile(File file){
+        if (file.getParentFile() != null){
+            String parentName = file.getParentFile().getName();
+            boolean del = FileUtil.del(file.getParentFile());
+            if (del){
+                log.info("删除文件 {} 成功",parentName);
+            }else {
+                log.error("删除文件 {} 失败",parentName);
+            }
+        }
+    }
+
     @Override
-    public ExecuteResponse executeCode(ExecuteRequest executeRequest) {
+    public ExecuteResponse executeCode(ExecuteRequest executeRequest) throws IOException {
         List<String> inputs = executeRequest.getInputs();
         String code = executeRequest.getCode();
         String language = executeRequest.getLanguage();
@@ -59,30 +78,72 @@ public class JavaNativeCodeBox implements CodeBox {
         File file = FileUtil.writeString(code, codeFilePath, StandardCharsets.UTF_8);
 
         // 4.编译 Java 代码
-        String compileCommand = String.format(CmdConstant.JAVA_COMPILE_CMD,file.getAbsolutePath());
+        String responseMessage = "";
+        String responseStatus = "";
+        String compileCommand = String.format(CmdConstant.JAVA_COMPILE_CMD, file.getAbsolutePath());
+
         try {
             Process exec = Runtime.getRuntime().exec(compileCommand);
-            int exit = exec.waitFor(); // 等待编译完成
-            if (exit == 0) {
-                log.info("编译成功");
-            }else {
-                // 获取控制台输出的错误信息
-                InputStreamReader inputStreamReader
-                        = new InputStreamReader(exec.getErrorStream(), FileConstant.ENCODING_GBK);
-                BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
-                // 逐行读取
-                StringBuilder stringBuilder = new StringBuilder();
-                String compileOutputLine;
-                while((compileOutputLine = bufferedReader.readLine() )!= null) {
-                    stringBuilder.append(compileOutputLine).append(System.lineSeparator());
-                }
-                log.error("编译失败： {} 退出码：{}",stringBuilder,exit);
+            ProcessMessage compileMessage = ProcessUtils.runProcessAndMessage(exec, CmdConstant.COMPILE_OPERATION_NAME);
+
+            if (compileMessage.getExitCode() == 0) {
+                // 编译成功
+                System.out.println(compileMessage.getSuccessMsg());
+            } else {
+                // 编译失败 封装返回消息
+                deleteFile(file);
+                responseStatus = CodeBoxExecuteEnum.COMPILE_FAILED.getValue();
+                responseMessage = compileMessage.getErrorMsg();
+                return ExecuteResponse.builder()
+                        .status(responseStatus)
+                        .message(responseMessage)
+                        .build();
             }
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException("Process Error", e);
         }
 
-        return null;
+        // 5.执行 Java 程序
+        if (ObjectUtil.isNull(inputs) || inputs.isEmpty()) {
+            return ExecuteResponse.builder()
+                    .status(CodeBoxExecuteEnum.FAILED.getValue())
+                    .message("测试用例为空")
+                    .build();
+        }
+        List<String> outputs = new ArrayList<>();
+        List<ExecuteInfo> executeInfos = new ArrayList<>();
+        for (String input : inputs) {
+            String runCommand = String.format(CmdConstant.JAVA_RUN_CMD,userCodePath,input);
+            try {
+                Process exec = Runtime.getRuntime().exec(runCommand);
+                ProcessMessage runMessage = ProcessUtils.runProcessAndMessage(exec, CmdConstant.RUN_OPERATION_NAME,input);
+                ExecuteInfo executeInfo = new ExecuteInfo();
+                executeInfo.setTime(runMessage.getExecuteTime());
+                executeInfo.setMemory(runMessage.getMemoryUsage());
+                System.out.println("执行用时：" + runMessage.getExecuteTime() + "ms");
+                System.out.println("执行内存：" + runMessage.getMemoryUsage() + "kb");
+                if (runMessage.getExitCode() == 0) {
+                    executeInfo.setMessage("success");
+                    outputs.add(runMessage.getSuccessMsg());
+                    System.out.println("执行结果：" + runMessage.getSuccessMsg());
+                } else {
+                    executeInfo.setMessage("failed");
+                    outputs.add(runMessage.getErrorMsg());
+                    System.out.println("执行结果：" + runMessage.getErrorMsg());
+                }
+            } catch (IOException e){
+                throw new RuntimeException("Process Error");
+            }
+        }
+        // 6.删除文件
+        deleteFile(file);
+
+        return ExecuteResponse.builder()
+                .status(CodeBoxExecuteEnum.SUCCESS.getValue())
+                .outputs(outputs)
+                .executeInfos(executeInfos)
+                .message(CodeBoxExecuteEnum.SUCCESS.getText())
+                .build();
     }
 
     @Override

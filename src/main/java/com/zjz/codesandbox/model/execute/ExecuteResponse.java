@@ -1,4 +1,4 @@
-package com.zjz.codesandbox.model;
+package com.zjz.codesandbox.model.execute;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -30,6 +30,11 @@ public class ExecuteResponse {
      * 接口信息
      */
     private String message;
+
+    /**
+     * 接口状态
+     */
+    private String status;
 
 
 
