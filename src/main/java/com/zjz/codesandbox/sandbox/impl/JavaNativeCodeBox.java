@@ -121,7 +121,7 @@ public class JavaNativeCodeBox implements CodeBox {
                 executeInfo.setTime(runMessage.getExecuteTime());
                 executeInfo.setMemory(runMessage.getMemoryUsage());
                 System.out.println("执行用时：" + runMessage.getExecuteTime() + "ms");
-                System.out.println("执行内存：" + runMessage.getMemoryUsage() + "kb");
+                System.out.println("执行内存：" + runMessage.getMemoryUsage() + "kB");
                 if (runMessage.getExitCode() == 0) {
                     executeInfo.setMessage("success");
                     outputs.add(runMessage.getSuccessMsg());

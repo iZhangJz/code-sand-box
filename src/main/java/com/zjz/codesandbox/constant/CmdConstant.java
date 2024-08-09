@@ -13,7 +13,7 @@ public interface CmdConstant {
     /**
      * Java 运行命令
      */
-    String JAVA_RUN_CMD = "java -cp %s Main";
+    String JAVA_RUN_CMD = "java -Xmx256M -cp %s Main";
 
     /**
      * 编译

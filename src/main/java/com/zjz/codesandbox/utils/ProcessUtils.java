@@ -8,6 +8,7 @@ import java.io.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.zjz.codesandbox.constant.CmdConstant.*;
 
@@ -17,16 +18,21 @@ import static com.zjz.codesandbox.constant.CmdConstant.*;
 @Slf4j
 public class ProcessUtils {
 
+    /**
+     * 超时常量
+     */
+    private static final long TIME_OUT = 5000L;
 
     private static long getWinMemoryUsage(String command) {
-        try{
+        try {
             Process process = Runtime.getRuntime().exec(command);
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             reader.readLine(); // Skip the header line
             String line = reader.readLine();
             reader.close();
             if (line != null) {
-                String[] parts = line.split(",");
+                // 使用正则表达式匹配逗号分隔符，同时忽略内存信息中的逗号
+                String[] parts = line.split(",(?=([^\"]*\"[^\"]*\")*[^\"]*$)");
                 if (parts.length > 4) {
                     try {
                         // Clean non-numeric characters
@@ -36,12 +42,13 @@ public class ProcessUtils {
                     }
                 }
             }
-        }catch (IOException e){
+        } catch (IOException e) {
             log.error("获取内存使用情况失败：{}", e.getMessage());
             throw new RuntimeException();
         }
         return -1;
     }
+
 
     private static long getLinuxMemoryUsage(String command) {
         try{
@@ -189,6 +196,11 @@ public class ProcessUtils {
             stopWatch.start(); // 开始计时
             outputStreamWriter.flush();
 
+            // 监控是否超时
+            AtomicBoolean isTerminated  = new AtomicBoolean(false);
+            monitorProcessTime(runProcess,isTerminated);
+
+
             // 异步读取标准输出和标准错误输出，防止阻塞
             StringBuilder SuccessStringBuilder = new StringBuilder();
             StringBuilder ErrorStringBuilder = new StringBuilder();
@@ -212,11 +224,19 @@ public class ProcessUtils {
                 processMessage.setSuccessMsg(SuccessStringBuilder.toString());
                 log.info(opName + "成功，测试用例为：{}", input);
             }else {
-                processMessage.setErrorMsg(ErrorStringBuilder.toString());
-                log.info(opName + "失败，测试用例为：{}", input);
+                if (isTerminated.get()){
+                    // 运行超时
+                    processMessage.setErrorMsg("process terminated due to timeout");
+                    log.info(opName + "失败:"+ "process terminated due to timeout，测试用例为：{}", input);
+                } else {
+                    processMessage.setErrorMsg(ErrorStringBuilder.toString());
+                    log.info(opName + "失败，测试用例为：{}", input);
+                }
             }
 
-            runProcess.destroy();
+            if (runProcess.isAlive()){
+                runProcess.destroy();
+            }
         } catch (IOException | InterruptedException e) {
             processMessage.setSuccessMsg(null);
             processMessage.setErrorMsg(e.getMessage());
@@ -240,6 +260,26 @@ public class ProcessUtils {
             processMessage.setMemoryUsage(maxMemoryUsage[0]); // 记录最大内存使用情况
         }
         return processMessage;
+    }
+
+    /**
+     * 守护线程，监控进程运行时间，超时则终止进程
+     * @param runProcess
+     */
+    public static void monitorProcessTime(Process runProcess, AtomicBoolean isTerminated){
+        new Thread(() -> {
+            try {
+                Thread.sleep(TIME_OUT);
+                long pid = runProcess.pid();
+                if (runProcess.isAlive()) {
+                    runProcess.destroy();
+                    isTerminated.set(true); // 设置终止标志
+                    log.info("进程 {} 运行超时，已终止", pid);
+                }
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }).start();
     }
 
 }
