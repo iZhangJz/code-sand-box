@@ -14,6 +14,7 @@ import com.zjz.codesandbox.model.execute.ExecuteResponse;
 import com.zjz.codesandbox.model.process.ProcessMessage;
 import com.zjz.codesandbox.sandbox.CodeBox;
 import com.zjz.codesandbox.utils.ProcessUtils;
+import com.zjz.codesandbox.utils.VerifyUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -57,10 +58,18 @@ public class JavaNativeCodeBox implements CodeBox {
     }
 
     @Override
-    public ExecuteResponse executeCode(ExecuteRequest executeRequest) throws IOException {
+    public ExecuteResponse executeCode(ExecuteRequest executeRequest) {
         List<String> inputs = executeRequest.getInputs();
         String code = executeRequest.getCode();
         String language = executeRequest.getLanguage();
+
+        // 校验用户代码是否保护敏感或危险代码
+        if (VerifyUtils.verifyCodeSecurity(code)) {
+            return ExecuteResponse.builder()
+                    .status(CodeBoxExecuteEnum.FAILED.getValue())
+                    .message("用户代码存在敏感或危险代码")
+                    .build();
+        }
 
         // 1.获取项目路径
         String projectPath = System.getProperty("user.dir");
@@ -116,6 +125,8 @@ public class JavaNativeCodeBox implements CodeBox {
             String runCommand = String.format(CmdConstant.JAVA_RUN_CMD,userCodePath,input);
             try {
                 Process exec = Runtime.getRuntime().exec(runCommand);
+
+
                 ProcessMessage runMessage = ProcessUtils.runProcessAndMessage(exec, CmdConstant.RUN_OPERATION_NAME,input);
                 ExecuteInfo executeInfo = new ExecuteInfo();
                 executeInfo.setTime(runMessage.getExecuteTime());
