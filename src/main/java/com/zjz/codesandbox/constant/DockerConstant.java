@@ -16,6 +16,11 @@ public interface DockerConstant {
     String DOCKER_CODE_PATH  = "/app";
 
     /**
+     * 测试用例输入临时文件
+     */
+    String DOCKER_TEST_CASE_INPUT = "/input.txt";
+
+    /**
      * 运行环境的内存大小 256MB
      */
     Long DOCKER_JAVA_MEMORY = 256 * 1000 * 1000L;

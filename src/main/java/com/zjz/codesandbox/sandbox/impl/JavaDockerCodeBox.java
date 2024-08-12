@@ -2,8 +2,6 @@ package com.zjz.codesandbox.sandbox.impl;
 
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.io.resource.ResourceUtil;
-import cn.hutool.core.lang.Snowflake;
-import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import com.github.dockerjava.api.DockerClient;
@@ -12,58 +10,47 @@ import com.github.dockerjava.api.command.*;
 import com.github.dockerjava.api.model.*;
 import com.github.dockerjava.core.DockerClientBuilder;
 import com.github.dockerjava.core.command.ExecStartResultCallback;
-import com.zjz.codesandbox.constant.CmdConstant;
 import com.zjz.codesandbox.constant.CommonConstant;
 import com.zjz.codesandbox.constant.DockerConstant;
 import com.zjz.codesandbox.constant.FileConstant;
-import com.zjz.codesandbox.model.enums.CodeBoxExecuteEnum;
+import com.zjz.codesandbox.model.dto.PreExecMessage;
+import com.zjz.codesandbox.model.dto.PreRunMessage;
+import com.zjz.codesandbox.model.dto.RunCodeMessage;
 import com.zjz.codesandbox.model.execute.ExecuteInfo;
 import com.zjz.codesandbox.model.execute.ExecuteRequest;
 import com.zjz.codesandbox.model.execute.ExecuteResponse;
-import com.zjz.codesandbox.model.process.ProcessMessage;
 import com.zjz.codesandbox.sandbox.CodeBox;
-import com.zjz.codesandbox.utils.ProcessUtils;
+import com.zjz.codesandbox.sandbox.ExecuteCodeTemplate;
 import com.zjz.codesandbox.utils.VerifyUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StopWatch;
 
-import java.io.*;
+import java.io.Closeable;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-
+/**
+ * Java Docker 代码沙箱
+ */
 @Service
 @Slf4j
-public class JavaDockerCodeBox implements CodeBox {
+public class JavaDockerCodeBox extends ExecuteCodeTemplate implements CodeBox {
 
 
     private final DockerClient dockerClient = DockerClientBuilder.getInstance().build();
 
-    public static void main(String[] args) throws IOException {
-        JavaDockerCodeBox javaNativeCodeBox = new JavaDockerCodeBox();
-        List<String> list = new ArrayList<>();
-        list.add("1 2");
-        list.add("2 2");
-        list.add("2 9");
-        String code = ResourceUtil.readStr("testcode/TimeErrorCode/Main.java",StandardCharsets.UTF_8);
-        ExecuteRequest java = ExecuteRequest.builder()
-                .code(code)
-                .inputs(list)
-                .language("java")
-                .build();
-        javaNativeCodeBox.executeCode(java);
-    }
 
     /**
      * Docker Java镜像拉取 在类加载时只执行一次
      */
     static {
         DockerClient dockerClient = DockerClientBuilder.getInstance().build();
-        // Check if the image already exists
+        // 检查镜像是否已经存在
         boolean imageExists = dockerClient.listImagesCmd().exec().stream()
                 .anyMatch(image -> image.getRepoTags() != null &&
                         Arrays.asList(image.getRepoTags()).contains(DockerConstant.DOCKER_JAVA_IMAGE));
@@ -89,81 +76,28 @@ public class JavaDockerCodeBox implements CodeBox {
         }
     }
 
-    /**
-     * 删除文件
-     * @param file 文件
-     */
-    private void deleteFile(File file){
-        if (file.getParentFile() != null){
-            String parentName = file.getParentFile().getName();
-            boolean del = FileUtil.del(file.getParentFile());
-            if (del){
-                log.info("删除文件 {} 成功",parentName);
-            }else {
-                log.error("删除文件 {} 失败",parentName);
-            }
+
+    @Override
+    public PreExecMessage preExec(ExecuteRequest executeRequest) {
+        String code = executeRequest.getCode();
+        // 校验用户代码是否保护敏感或危险代码
+        if (VerifyUtils.verifyCodeSecurity(code)){
+            return PreExecMessage.builder()
+                    .success(false)
+                    .reason("Dangerous or sensitive code exists")
+                    .build();
         }
+        return PreExecMessage.builder()
+                .success(true)
+                .build();
     }
 
     @Override
-    public ExecuteResponse executeCode(ExecuteRequest executeRequest) {
-        List<String> inputs = executeRequest.getInputs();
-        String code = executeRequest.getCode();
-        String language = executeRequest.getLanguage();
-
-        // 校验用户代码是否保护敏感或危险代码
-        if (VerifyUtils.verifyCodeSecurity(code)) {
-            return ExecuteResponse.builder()
-                    .status(CodeBoxExecuteEnum.FAILED.getValue())
-                    .message("用户代码存在敏感或危险代码")
-                    .build();
-        }
-
-        // 1.获取项目路径
-        String projectPath = System.getProperty("user.dir");
-        String globalCodePath
-                = projectPath + File.separator + FileConstant.GLOBAL_CODE_DIR_NAME + File.separator  + language;
-        if (!FileUtil.exist(globalCodePath)) {
-            // 创建目录
-            FileUtil.mkdir(globalCodePath);
-        }
-        // 2.为用户代码生成一个唯一的目录
-        Snowflake snowflake = IdUtil.getSnowflake();
-        String userCodePath = globalCodePath + File.separator + snowflake.nextId();
-        String codeFilePath = userCodePath +File.separator + FileConstant.JAVA_FILE_NAME;
-        // 3.将用户代码写入文件
-        File file = FileUtil.writeString(code, codeFilePath, StandardCharsets.UTF_8);
-
-        // 4.编译 Java 代码
-        String responseMessage = "";
-        String responseStatus = "";
-        String compileCommand = String.format(CmdConstant.JAVA_COMPILE_CMD, file.getAbsolutePath());
-
-        try {
-            Process exec = Runtime.getRuntime().exec(compileCommand);
-            ProcessMessage compileMessage = ProcessUtils.runProcessAndMessage(exec, CmdConstant.COMPILE_OPERATION_NAME);
-
-            if (compileMessage.getExitCode() == 0) {
-                // 编译成功
-                System.out.println(compileMessage.getSuccessMsg());
-            } else {
-                // 编译失败 封装返回消息
-                deleteFile(file);
-                responseStatus = CodeBoxExecuteEnum.COMPILE_FAILED.getValue();
-                responseMessage = compileMessage.getErrorMsg();
-                return ExecuteResponse.builder()
-                        .status(responseStatus)
-                        .message(responseMessage)
-                        .build();
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Process Error", e);
-        }
-
-        // 5. 创建 Java 创建容器
+    public PreRunMessage preRunCode(String userCodePath) {
+        // 创建 Java 创建容器
         CreateContainerCmd containerCmd = dockerClient.createContainerCmd(DockerConstant.DOCKER_JAVA_IMAGE);
         HostConfig hostConfig = new HostConfig();
-        // 5.1 将本地文件同步到容器中
+        // 将本地文件同步到容器中
         hostConfig.setBinds(new Bind(userCodePath, new Volume(DockerConstant.DOCKER_CODE_PATH)));
         hostConfig.withMemory(DockerConstant.DOCKER_JAVA_MEMORY);
         hostConfig.withMemorySwap(0L);
@@ -179,23 +113,37 @@ public class JavaDockerCodeBox implements CodeBox {
                 .withTty(true)
                 .exec();
         String containerId = response.getId();
-        // 5.2 启动容器
+        // 启动容器
         StartContainerCmd startContainerCmd = dockerClient.startContainerCmd(containerId);
         startContainerCmd.exec();
+        return PreRunMessage.builder()
+                .success(true)
+                .data(containerId)
+                .build();
+    }
 
-        // 6.执行 Java 程序
+    @Override
+    public RunCodeMessage runCode(List<String> inputs, String userCodePath,Object data) {
+        // 执行 Java 程序
+        if (ObjectUtil.isNull(data)) {
+            return RunCodeMessage.builder()
+                    .success(false)
+                    .exceptionMessage("The container ID is empty")
+                    .build();
+        }
+        String containerId = (String) data;
         if (ObjectUtil.isNull(inputs) || inputs.isEmpty()) {
-            return ExecuteResponse.builder()
-                    .status(CodeBoxExecuteEnum.FAILED.getValue())
-                    .message("测试用例为空")
+            return RunCodeMessage.builder()
+                    .success(false)
+                    .exceptionMessage("The test case is empty")
                     .build();
         }
         List<String> outputs = new ArrayList<>();
         List<ExecuteInfo> executeInfos = new ArrayList<>();
         for (String input : inputs) {
             // 将输入数据写入到容器内的文件
-            String inputFilePath = DockerConstant.DOCKER_CODE_PATH + "/input.txt";
-            String hostInputFilePath = userCodePath + "/input.txt";
+            String inputFilePath = DockerConstant.DOCKER_CODE_PATH + DockerConstant.DOCKER_TEST_CASE_INPUT;
+            String hostInputFilePath = userCodePath + DockerConstant.DOCKER_TEST_CASE_INPUT;
             FileUtil.writeString(input, hostInputFilePath, StandardCharsets.UTF_8);
 
             // 构建要执行的命令
@@ -212,9 +160,9 @@ public class JavaDockerCodeBox implements CodeBox {
 
             String execId = cmdResponse.getId();
             if (StrUtil.isBlank(execId)){
-                return ExecuteResponse.builder()
-                        .status(CodeBoxExecuteEnum.FAILED.getValue())
-                        .message("用例执行失败")
+                return RunCodeMessage.builder()
+                        .success(false)
+                        .exceptionMessage("The use case failed to execute")
                         .build();
             }
 
@@ -232,7 +180,7 @@ public class JavaDockerCodeBox implements CodeBox {
                     // 去掉所有换行符
                     payload = payload.replaceAll("\\R", "");
                     outputs.add(payload);
-                    System.out.println("执行结果：" + new String(frame.getPayload()));
+                    System.out.println("Execution result：" + new String(frame.getPayload()));
                     super.onNext(frame);
                 }
             };
@@ -291,18 +239,16 @@ public class JavaDockerCodeBox implements CodeBox {
                 statsCmd.close();
             }
         }
-
-
-        // 6.删除文件
-        deleteFile(file);
-        System.out.println(executeInfos);
-        System.out.println(outputs);
-        return ExecuteResponse.builder()
-                .status(CodeBoxExecuteEnum.SUCCESS.getValue())
+        return RunCodeMessage.builder()
+                .success(true)
                 .outputs(outputs)
                 .executeInfos(executeInfos)
-                .message(CodeBoxExecuteEnum.SUCCESS.getText())
                 .build();
+    }
+
+    @Override
+    public ExecuteResponse executeCode(ExecuteRequest executeRequest) {
+        return exec(executeRequest);
     }
 
     @Override
