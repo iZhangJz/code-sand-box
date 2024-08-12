@@ -19,4 +19,9 @@ public interface FileConstant {
      * 编码格式常量 GBK
      */
     String ENCODING_GBK = "gbk";
+
+    /**
+     * seccomp 配置文件
+     */
+    String SECCOMP_PROFILE = "seccomp.json";
 }

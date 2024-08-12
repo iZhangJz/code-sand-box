@@ -13,6 +13,7 @@ import com.github.dockerjava.api.model.*;
 import com.github.dockerjava.core.DockerClientBuilder;
 import com.github.dockerjava.core.command.ExecStartResultCallback;
 import com.zjz.codesandbox.constant.CmdConstant;
+import com.zjz.codesandbox.constant.CommonConstant;
 import com.zjz.codesandbox.constant.DockerConstant;
 import com.zjz.codesandbox.constant.FileConstant;
 import com.zjz.codesandbox.model.enums.CodeBoxExecuteEnum;
@@ -32,6 +33,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+
 
 @Service
 @Slf4j
@@ -46,7 +49,7 @@ public class JavaDockerCodeBox implements CodeBox {
         list.add("1 2");
         list.add("2 2");
         list.add("2 9");
-        String code = ResourceUtil.readStr("testcode/Main.java",StandardCharsets.UTF_8);
+        String code = ResourceUtil.readStr("testcode/TimeErrorCode/Main.java",StandardCharsets.UTF_8);
         ExecuteRequest java = ExecuteRequest.builder()
                 .code(code)
                 .inputs(list)
@@ -163,8 +166,13 @@ public class JavaDockerCodeBox implements CodeBox {
         // 5.1 将本地文件同步到容器中
         hostConfig.setBinds(new Bind(userCodePath, new Volume(DockerConstant.DOCKER_CODE_PATH)));
         hostConfig.withMemory(DockerConstant.DOCKER_JAVA_MEMORY);
+        hostConfig.withMemorySwap(0L);
+        String seccomp = ResourceUtil.readUtf8Str(FileConstant.SECCOMP_PROFILE);
+        hostConfig.withSecurityOpts(List.of("seccomp=" + seccomp));
         CreateContainerResponse response = containerCmd
                 .withHostConfig(hostConfig)
+                .withNetworkDisabled(true)  // 网络限制
+                .withReadonlyRootfs(true)   // 限制对 root 目录的写权限
                 .withAttachStdin(true)
                 .withAttachStderr(true)
                 .withAttachStdout(true)
@@ -175,7 +183,7 @@ public class JavaDockerCodeBox implements CodeBox {
         StartContainerCmd startContainerCmd = dockerClient.startContainerCmd(containerId);
         startContainerCmd.exec();
 
-        // 5.执行 Java 程序
+        // 6.执行 Java 程序
         if (ObjectUtil.isNull(inputs) || inputs.isEmpty()) {
             return ExecuteResponse.builder()
                     .status(CodeBoxExecuteEnum.FAILED.getValue())
@@ -231,7 +239,6 @@ public class JavaDockerCodeBox implements CodeBox {
 
             // 获取 docker 容器状态
             final Long[] maxMemoryUsage = {0L};
-            // 获取 docker 容器状态
             StatsCmd statsCmd = dockerClient.statsCmd(containerId);
             ResultCallback<Statistics> statisticsResultCallback = new ResultCallback<>() {
                 @Override
@@ -260,10 +267,15 @@ public class JavaDockerCodeBox implements CodeBox {
             try {
                 StopWatch stopWatch = new StopWatch();
                 stopWatch.start();
-                dockerClient.execStartCmd(execId)
+                boolean completionInTime = dockerClient.execStartCmd(execId)
                         .exec(execStartResultCallback)
-                        .awaitCompletion();
+                        .awaitCompletion(CommonConstant.TIME_OUT, TimeUnit.MILLISECONDS); // 超时限制
                 stopWatch.stop();
+                if (!completionInTime){
+                    // 超时退出
+                    log.info("process terminated due to timeout");
+                    outputs.add("process terminated due to timeout");
+                }
 
                 // 等待内存统计完成
                 Thread.sleep(1000);  // 增加一个短暂的等待时间，确保统计回调能及时处理数据

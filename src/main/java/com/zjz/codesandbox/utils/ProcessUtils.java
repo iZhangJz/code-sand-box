@@ -1,5 +1,6 @@
 package com.zjz.codesandbox.utils;
 
+import com.zjz.codesandbox.constant.CommonConstant;
 import com.zjz.codesandbox.model.process.ProcessMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StopWatch;
@@ -18,10 +19,6 @@ import static com.zjz.codesandbox.constant.CmdConstant.*;
 @Slf4j
 public class ProcessUtils {
 
-    /**
-     * 超时常量
-     */
-    private static final long TIME_OUT = 5000L;
 
     private static long getWinMemoryUsage(String command) {
         try {
@@ -269,7 +266,7 @@ public class ProcessUtils {
     public static void monitorProcessTime(Process runProcess, AtomicBoolean isTerminated){
         new Thread(() -> {
             try {
-                Thread.sleep(TIME_OUT);
+                Thread.sleep(CommonConstant.TIME_OUT);
                 long pid = runProcess.pid();
                 if (runProcess.isAlive()) {
                     runProcess.destroy();
