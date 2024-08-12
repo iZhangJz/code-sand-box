@@ -142,6 +142,7 @@ public class JavaNativeCodeBox implements CodeBox {
                     outputs.add(runMessage.getErrorMsg());
                     System.out.println("执行结果：" + runMessage.getErrorMsg());
                 }
+                executeInfos.add(executeInfo);
             } catch (IOException e){
                 throw new RuntimeException("Process Error");
             }
