@@ -74,11 +74,15 @@ public class JavaNativeCodeBox extends ExecuteCodeTemplate implements CodeBox {
 //                System.out.println("执行内存：" + runMessage.getMemoryUsage() + "kB");
                 if (runMessage.getExitCode() == 0) {
                     executeInfo.setMessage("success");
-                    outputs.add(runMessage.getSuccessMsg());
+                    String payload = new String(runMessage.getSuccessMsg());
+                    payload = payload.replaceAll("\\R", "");
+                    outputs.add(payload);
 //                    System.out.println("执行结果：" + runMessage.getSuccessMsg());
                 } else {
                     executeInfo.setMessage("failed");
-                    outputs.add(runMessage.getErrorMsg());
+                    String payload = new String(runMessage.getErrorMsg());
+                    payload = payload.replaceAll("\\R", "");
+                    outputs.add(payload);
 //                    System.out.println("执行结果：" + runMessage.getErrorMsg());
                 }
                 executeInfos.add(executeInfo);
