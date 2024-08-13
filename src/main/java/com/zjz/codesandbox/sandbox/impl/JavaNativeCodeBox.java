@@ -27,6 +27,21 @@ import java.util.List;
 @Slf4j
 public class JavaNativeCodeBox extends ExecuteCodeTemplate implements CodeBox {
 
+//    public static void main(String[] args) throws IOException {
+//        JavaNativeCodeBox javaNativeCodeBox = new JavaNativeCodeBox();
+//        List<String> list = new ArrayList<>();
+//        list.add("1 2");
+//        list.add("2 2");
+//        list.add("2 9");
+//        String code = ResourceUtil.readStr("testcode/Main.java", StandardCharsets.UTF_8);
+//        ExecuteRequest java = ExecuteRequest.builder()
+//                .code(code)
+//                .inputs(list)
+//                .language("java")
+//                .build();
+//        javaNativeCodeBox.executeCode(java);
+//    }
+
     @Override
     public PreExecMessage preExec(ExecuteRequest executeRequest) {
         String code = executeRequest.getCode();
@@ -65,22 +80,22 @@ public class JavaNativeCodeBox extends ExecuteCodeTemplate implements CodeBox {
             try {
                 Process exec = Runtime.getRuntime().exec(runCommand);
 
-
-                ProcessMessage runMessage = ProcessUtils.runProcessAndMessage(exec, CmdConstant.RUN_OPERATION_NAME,input);
+                ProcessMessage runMessage
+                        = ProcessUtils.runProcessAndMessage(exec, CmdConstant.RUN_OPERATION_NAME,input,preMemory);
                 ExecuteInfo executeInfo = new ExecuteInfo();
                 executeInfo.setTime(runMessage.getExecuteTime());
                 executeInfo.setMemory(runMessage.getMemoryUsage());
-//                System.out.println("执行用时：" + runMessage.getExecuteTime() + "ms");
-//                System.out.println("执行内存：" + runMessage.getMemoryUsage() + "kB");
+                log.info("执行用时：" + runMessage.getExecuteTime() + "ms");
+                log.info("执行内存：" + runMessage.getMemoryUsage() + "KB");
                 if (runMessage.getExitCode() == 0) {
                     executeInfo.setMessage("success");
-                    String payload = new String(runMessage.getSuccessMsg());
+                    String payload = runMessage.getSuccessMsg();
                     payload = payload.replaceAll("\\R", "");
                     outputs.add(payload);
 //                    System.out.println("执行结果：" + runMessage.getSuccessMsg());
                 } else {
                     executeInfo.setMessage("failed");
-                    String payload = new String(runMessage.getErrorMsg());
+                    String payload = runMessage.getErrorMsg();
                     payload = payload.replaceAll("\\R", "");
                     outputs.add(payload);
 //                    System.out.println("执行结果：" + runMessage.getErrorMsg());
