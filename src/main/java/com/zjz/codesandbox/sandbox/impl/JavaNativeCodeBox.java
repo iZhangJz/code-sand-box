@@ -81,7 +81,7 @@ public class JavaNativeCodeBox extends ExecuteCodeTemplate implements CodeBox {
                 Process exec = Runtime.getRuntime().exec(runCommand);
 
                 ProcessMessage runMessage
-                        = ProcessUtils.runProcessAndMessage(exec, CmdConstant.RUN_OPERATION_NAME,input,preMemory);
+                        = ProcessUtils.runProcessAndMessage(exec, CmdConstant.RUN_OPERATION_NAME,input);
                 ExecuteInfo executeInfo = new ExecuteInfo();
                 executeInfo.setTime(runMessage.getExecuteTime());
                 executeInfo.setMemory(runMessage.getMemoryUsage());

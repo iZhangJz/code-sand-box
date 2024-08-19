@@ -175,11 +175,24 @@ public class ProcessUtils {
                 // 获取控制台输出的错误信息
                 // 获取错误信息字符串
                 String errorStr = ErrorStringBuilder.toString();
-                int index = errorStr.indexOf("Main");
+                StringBuilder filteredErrorStr = new StringBuilder();
+                String[] lines = errorStr.split("\n");
+
+                for (String line : lines) {
+                    int index = line.indexOf("Main.java");
+                    if (index != -1) {
+                        // 保留 Main.java 及其后的内容
+                        filteredErrorStr.append(line.substring(index)).append("\n");
+                    } else {
+                        // 保留其他行
+                        filteredErrorStr.append(line).append("\n");
+                    }
+                }
                 // 设置错误消息
-                processMessage.setErrorMsg(index != -1 ? errorStr.substring(index) : errorStr);
+                processMessage.setErrorMsg(filteredErrorStr.toString());
                 // 记录日志
-                log.error("{} 失败： {} 退出码：{}", opName, ErrorStringBuilder, exit);
+                log.error("{} 失败： {} 退出码：{}", opName, filteredErrorStr, exit);
+
             }
         } catch (InterruptedException | ExecutionException e) {
             throw new RuntimeException(e);
@@ -187,13 +200,13 @@ public class ProcessUtils {
         return processMessage;
     }
 
-    public static ProcessMessage runProcessAndMessage(Process runProcess, String opName, String input,long memory) {
+    public static ProcessMessage runProcessAndMessage(Process runProcess, String opName, String input) {
         ProcessMessage processMessage = new ProcessMessage();
         StopWatch stopWatch = new StopWatch();
         OutputStream outputStream = runProcess.getOutputStream();
         OutputStreamWriter outputStreamWriter = new OutputStreamWriter(outputStream);
 
-        String[] split = input.split(" ");
+//        String[] split = input.split(" ");
         long pid = runProcess.pid();
         final long[] maxMemoryUsage = {0};
 
@@ -213,7 +226,8 @@ public class ProcessUtils {
             // 每 10 ms 监控一次内存使用情况
             scheduler.scheduleAtFixedRate(memoryMonitor, 10, 10, TimeUnit.MILLISECONDS); // 定期检查内存使用情况
 
-            outputStreamWriter.write(String.join("\n", split) + "\n");
+            outputStreamWriter.write(input + "\n");
+//            System.out.println(String.join("\n", split) + "\n");
             stopWatch.start(); // 开始计时
             outputStreamWriter.flush();
 
