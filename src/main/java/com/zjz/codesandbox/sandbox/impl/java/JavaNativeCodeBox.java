@@ -1,7 +1,8 @@
-package com.zjz.codesandbox.sandbox.impl;
+package com.zjz.codesandbox.sandbox.impl.java;
 
 import cn.hutool.core.util.ObjectUtil;
 import com.zjz.codesandbox.constant.CmdConstant;
+import com.zjz.codesandbox.model.dto.CompileMessage;
 import com.zjz.codesandbox.model.dto.PreExecMessage;
 import com.zjz.codesandbox.model.dto.PreRunMessage;
 import com.zjz.codesandbox.model.dto.RunCodeMessage;
@@ -11,11 +12,13 @@ import com.zjz.codesandbox.model.execute.ExecuteResponse;
 import com.zjz.codesandbox.model.process.ProcessMessage;
 import com.zjz.codesandbox.sandbox.CodeBox;
 import com.zjz.codesandbox.sandbox.ExecuteCodeTemplate;
+import com.zjz.codesandbox.utils.LanguageCommonUtils;
 import com.zjz.codesandbox.utils.ProcessUtils;
 import com.zjz.codesandbox.utils.VerifyUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +46,14 @@ public class JavaNativeCodeBox extends ExecuteCodeTemplate implements CodeBox {
 //    }
 
     @Override
+    public void deleteContainer() {}
+
+    @Override
+    public CompileMessage compileCode(File file) {
+        return LanguageCommonUtils.compileJavaCode(file);
+    }
+
+    @Override
     public PreExecMessage preExec(ExecuteRequest executeRequest) {
         String code = executeRequest.getCode();
         // 校验用户代码是否保护敏感或危险代码
@@ -66,8 +77,8 @@ public class JavaNativeCodeBox extends ExecuteCodeTemplate implements CodeBox {
     }
 
     @Override
-    public RunCodeMessage runCode(List<String> inputs,String userCodePath,Object data) {
-        if (ObjectUtil.isNull(inputs) || inputs.isEmpty()) {
+    public RunCodeMessage runCode(List<String> inputs,String userCodePath) {
+        if (ObjectUtil.isNull(inputs)) {
             return RunCodeMessage.builder()
                     .success(false)
                     .exceptionMessage("The test case is empty")

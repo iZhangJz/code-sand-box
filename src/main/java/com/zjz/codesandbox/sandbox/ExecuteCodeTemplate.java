@@ -3,7 +3,6 @@ package com.zjz.codesandbox.sandbox;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.lang.Snowflake;
 import cn.hutool.core.util.IdUtil;
-import com.zjz.codesandbox.constant.CmdConstant;
 import com.zjz.codesandbox.constant.FileConstant;
 import com.zjz.codesandbox.model.dto.CompileMessage;
 import com.zjz.codesandbox.model.dto.PreExecMessage;
@@ -12,12 +11,9 @@ import com.zjz.codesandbox.model.dto.RunCodeMessage;
 import com.zjz.codesandbox.model.enums.CodeBoxExecuteEnum;
 import com.zjz.codesandbox.model.execute.ExecuteRequest;
 import com.zjz.codesandbox.model.execute.ExecuteResponse;
-import com.zjz.codesandbox.model.process.ProcessMessage;
-import com.zjz.codesandbox.utils.ProcessUtils;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -34,6 +30,7 @@ public abstract class ExecuteCodeTemplate {
         List<String>inputs = executeRequest.getInputs();
         String code = executeRequest.getCode();
         String language = executeRequest.getLanguage();
+        // 1.编译前文件校验
         PreExecMessage preExecMessage = preExec(executeRequest);
         if (!preExecMessage.getSuccess()){
             return ExecuteResponse.builder()
@@ -41,36 +38,51 @@ public abstract class ExecuteCodeTemplate {
                     .status(CodeBoxExecuteEnum.FAILED.getValue())
                     .build();
         }
+        // 2.保存代码文件到本地
         File file = saveCodeFile(code, language);
 
-        CompileMessage compileMessage = compileCode(file);
-        if (!compileMessage.getSuccess()){
-            // 编译失败 直接返回
-            return ExecuteResponse.builder()
-                    .status(CodeBoxExecuteEnum.COMPILE_FAILED.getValue())
-                    .message(compileMessage.getReason())
-                    .build();
-        }
+        RunCodeMessage runCodeMessage;
+        try {
+            // 3.编译代码文件
+            CompileMessage compileMessage = compileCode(file);
+            if (!compileMessage.getSuccess()){
+                // 编译失败 删除文件 直接返回
+                deleteFile(file);
+                return ExecuteResponse.builder()
+                        .status(CodeBoxExecuteEnum.COMPILE_FAILED.getValue())
+                        .message(compileMessage.getReason())
+                        .build();
+            }
 
-        String userCodePath = file.getParentFile().getAbsolutePath();
-        PreRunMessage preRunMessage = preRunCode(userCodePath);
-        if (!preRunMessage.getSuccess()){
-            // 前置运行准备失败
-            return ExecuteResponse.builder()
-                    .message(preRunMessage.getReason())
-                    .status(CodeBoxExecuteEnum.FAILED.getValue())
-                    .build();
-        }
+            // 4.运行代码前置准备
+            String userCodePath = file.getParentFile().getAbsolutePath();
+            PreRunMessage preRunMessage = preRunCode(userCodePath);
+            if (!preRunMessage.getSuccess()){
+                // 前置运行准备失败
+                return ExecuteResponse.builder()
+                        .message(preRunMessage.getReason())
+                        .status(CodeBoxExecuteEnum.FAILED.getValue())
+                        .build();
+            }
 
-        RunCodeMessage runCodeMessage = runCode(inputs, userCodePath,preRunMessage.getData());
-        if (!runCodeMessage.getSuccess()){
-            // 执行失败
-            return ExecuteResponse.builder()
-                    .message(runCodeMessage.getExceptionMessage())
-                    .status(CodeBoxExecuteEnum.FAILED.getValue())
-                    .build();
+            // 5.运行代码
+            runCodeMessage = runCode(inputs, userCodePath);
+            if (!runCodeMessage.getSuccess()){
+                // 执行失败
+                return ExecuteResponse.builder()
+                        .message(runCodeMessage.getExceptionMessage())
+                        .status(CodeBoxExecuteEnum.FAILED.getValue())
+                        .build();
+            }
+
+        }catch (Exception e){
+            e.getStackTrace();
+            throw e;
+        }finally {
+            // 6.删除文件和容器
+            deleteFile(file);
+            deleteContainer();
         }
-        deleteFile(file);
         return ExecuteResponse.builder()
                 .status(CodeBoxExecuteEnum.SUCCESS.getValue())
                 .outputs(runCodeMessage.getOutputs())
@@ -96,43 +108,11 @@ public abstract class ExecuteCodeTemplate {
         // 为用户代码生成一个唯一的目录
         Snowflake snowflake = IdUtil.getSnowflake();
         String userCodePath = globalCodePath + File.separator + snowflake.nextId();
-        String codeFilePath = userCodePath +File.separator + FileConstant.JAVA_FILE_NAME;
+        String codeFilePath = userCodePath +File.separator + FileConstant.FILE_NAME + language;
         // 将用户代码写入文件
         return FileUtil.writeString(code, codeFilePath, StandardCharsets.UTF_8);
     }
 
-    /**
-     * 编译代码文件
-     * @param file 代码文件
-     * @return 执行响应
-     */
-    private CompileMessage compileCode(File file){
-        String responseMessage = "";
-        String compileCommand = String.format(CmdConstant.JAVA_COMPILE_CMD, file.getAbsolutePath());
-
-        try {
-            Process exec = Runtime.getRuntime().exec(compileCommand);
-            ProcessMessage compileMessage = ProcessUtils.runProcessAndMessage(exec, CmdConstant.COMPILE_OPERATION_NAME);
-
-            if (compileMessage.getExitCode() == 0) {
-                // 编译成功
-                System.out.println(compileMessage.getSuccessMsg());
-            } else {
-                // 编译失败 封装返回消息
-                deleteFile(file);
-                responseMessage = compileMessage.getErrorMsg();
-                return CompileMessage.builder()
-                        .success(false)
-                        .reason(responseMessage)
-                        .build();
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("Process Error", e);
-        }
-        return CompileMessage.builder()
-                .success(true)
-                .build();
-    }
 
     /**
      * 删除文件
@@ -150,6 +130,18 @@ public abstract class ExecuteCodeTemplate {
     }
 
     /**
+     * 删除容器
+     */
+    public abstract void deleteContainer();
+
+    /**
+     * 编译代码文件
+     * @param file 代码文件
+     * @return 执行响应
+     */
+    public abstract CompileMessage compileCode(File file);
+
+    /**
      * 执行前准备工作
      */
     public abstract PreExecMessage preExec(ExecuteRequest executeRequest);
@@ -162,5 +154,5 @@ public abstract class ExecuteCodeTemplate {
     /**
      * 运行代码
      */
-    public abstract RunCodeMessage runCode(List<String> inputs, String userCodePath,Object data);
+    public abstract RunCodeMessage runCode(List<String> inputs, String userCodePath);
 }

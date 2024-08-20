@@ -1,18 +1,16 @@
-package com.zjz.codesandbox.sandbox.impl;
+package com.zjz.codesandbox.sandbox.impl.java;
 
 import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.io.resource.ResourceUtil;
 import cn.hutool.core.util.ObjectUtil;
-import cn.hutool.core.util.StrUtil;
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.*;
-import com.github.dockerjava.api.model.*;
+import com.github.dockerjava.api.model.Bind;
+import com.github.dockerjava.api.model.HostConfig;
+import com.github.dockerjava.api.model.PullResponseItem;
+import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.DockerClientBuilder;
-import com.github.dockerjava.core.command.ExecStartResultCallback;
-import com.zjz.codesandbox.constant.CommonConstant;
 import com.zjz.codesandbox.constant.DockerConstant;
-import com.zjz.codesandbox.constant.FileConstant;
+import com.zjz.codesandbox.model.dto.CompileMessage;
 import com.zjz.codesandbox.model.dto.PreExecMessage;
 import com.zjz.codesandbox.model.dto.PreRunMessage;
 import com.zjz.codesandbox.model.dto.RunCodeMessage;
@@ -21,18 +19,17 @@ import com.zjz.codesandbox.model.execute.ExecuteRequest;
 import com.zjz.codesandbox.model.execute.ExecuteResponse;
 import com.zjz.codesandbox.sandbox.CodeBox;
 import com.zjz.codesandbox.sandbox.ExecuteCodeTemplate;
+import com.zjz.codesandbox.utils.DockerCommonUtils;
+import com.zjz.codesandbox.utils.LanguageCommonUtils;
 import com.zjz.codesandbox.utils.VerifyUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StopWatch;
 
-import java.io.Closeable;
-import java.io.IOException;
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Java Docker 代码沙箱
@@ -42,8 +39,24 @@ import java.util.concurrent.TimeUnit;
 public class JavaDockerCodeBox extends ExecuteCodeTemplate implements CodeBox {
 
 
+//    public static void main(String[] args) throws IOException {
+//        JavaDockerCodeBox javaDockerCodeBox = new JavaDockerCodeBox();
+//        List<String> list = new ArrayList<>();
+//        list.add("1 2");
+//        list.add("2 2");
+//        list.add("2 9");
+//        String code = ResourceUtil.readStr("testcode/java/Main.java", StandardCharsets.UTF_8);
+//        ExecuteRequest java = ExecuteRequest.builder()
+//                .code(code)
+//                .inputs(list)
+//                .language("java")
+//                .build();
+//        javaDockerCodeBox.executeCode(java);
+//    }
+
     private final DockerClient dockerClient = DockerClientBuilder.getInstance().build();
 
+    private String containerId;
 
     /**
      * Docker Java镜像拉取 在类加载时只执行一次
@@ -78,6 +91,16 @@ public class JavaDockerCodeBox extends ExecuteCodeTemplate implements CodeBox {
 
 
     @Override
+    public void deleteContainer() {
+        DockerCommonUtils.deleteContainer(containerId,dockerClient);
+    }
+
+    @Override
+    public CompileMessage compileCode(File file) {
+        return LanguageCommonUtils.compileJavaCode(file);
+    }
+
+    @Override
     public PreExecMessage preExec(ExecuteRequest executeRequest) {
         String code = executeRequest.getCode();
         // 校验用户代码是否保护敏感或危险代码
@@ -101,8 +124,6 @@ public class JavaDockerCodeBox extends ExecuteCodeTemplate implements CodeBox {
         hostConfig.setBinds(new Bind(userCodePath, new Volume(DockerConstant.DOCKER_CODE_PATH)));
         hostConfig.withMemory(DockerConstant.DOCKER_JAVA_MEMORY);
         hostConfig.withMemorySwap(0L);
-        String seccomp = ResourceUtil.readUtf8Str(FileConstant.SECCOMP_PROFILE);
-        hostConfig.withSecurityOpts(List.of("seccomp=" + seccomp));
         CreateContainerResponse response = containerCmd
                 .withHostConfig(hostConfig)
                 .withNetworkDisabled(true)  // 网络限制
@@ -112,30 +133,22 @@ public class JavaDockerCodeBox extends ExecuteCodeTemplate implements CodeBox {
                 .withAttachStdout(true)
                 .withTty(true)
                 .exec();
-        String containerId = response.getId();
+        containerId = response.getId();
         // 启动容器
         StartContainerCmd startContainerCmd = dockerClient.startContainerCmd(containerId);
         startContainerCmd.exec();
         return PreRunMessage.builder()
                 .success(true)
-                .data(containerId)
                 .build();
     }
 
     @Override
-    public RunCodeMessage runCode(List<String> inputs, String userCodePath,Object data) {
-        // 执行 Java 程序
-        if (ObjectUtil.isNull(data)) {
+    public RunCodeMessage runCode(List<String> inputs, String userCodePath) {
+
+        if (ObjectUtil.isNull(inputs)) {
             return RunCodeMessage.builder()
                     .success(false)
-                    .exceptionMessage("The container ID is empty")
-                    .build();
-        }
-        String containerId = (String) data;
-        if (ObjectUtil.isNull(inputs) || inputs.isEmpty()) {
-            return RunCodeMessage.builder()
-                    .success(false)
-                    .exceptionMessage("The test case is empty")
+                    .exceptionMessage("The test case is null")
                     .build();
         }
         List<String> outputs = new ArrayList<>();
@@ -152,91 +165,12 @@ public class JavaDockerCodeBox extends ExecuteCodeTemplate implements CodeBox {
                     "java -cp " + DockerConstant.DOCKER_CODE_PATH + " Main < " + inputFilePath
             };
 
-            ExecCreateCmdResponse cmdResponse = dockerClient.execCreateCmd(containerId)
-                    .withCmd(cmd)
-                    .withAttachStderr(true)
-                    .withAttachStdout(true)
-                    .exec();
-
-            String execId = cmdResponse.getId();
-            if (StrUtil.isBlank(execId)){
+            boolean success = LanguageCommonUtils.runCode(outputs, executeInfos, cmd, containerId, dockerClient);
+            if (!success){
                 return RunCodeMessage.builder()
                         .success(false)
                         .exceptionMessage("The use case failed to execute")
                         .build();
-            }
-
-            ExecuteInfo executeInfo = new ExecuteInfo();
-            ExecStartResultCallback execStartResultCallback = new ExecStartResultCallback(){
-                @Override
-                public void onNext(Frame frame) {
-                    StreamType streamType = frame.getStreamType();
-                    if (StreamType.STDERR.equals(streamType)){
-                        executeInfo.setMessage("failed");
-                    } else {
-                        executeInfo.setMessage("success");
-                    }
-                    String payload = new String(frame.getPayload());
-                    // 去掉所有换行符
-                    payload = payload.replaceAll("\\R", "");
-                    outputs.add(payload);
-                    System.out.println("Execution result：" + new String(frame.getPayload()));
-                    super.onNext(frame);
-                }
-            };
-
-            // 获取 docker 容器状态
-            final Long[] maxMemoryUsage = {0L};
-            StatsCmd statsCmd = dockerClient.statsCmd(containerId);
-            ResultCallback<Statistics> statisticsResultCallback = new ResultCallback<>() {
-                @Override
-                public void onStart(Closeable closeable) {}
-
-                @Override
-                public void onNext(Statistics statistics) {
-                    Long usage = statistics.getMemoryStats().getUsage();
-                    if (ObjectUtil.isNotNull(usage)){
-                        maxMemoryUsage[0] = Math.max(maxMemoryUsage[0], usage);
-                    }
-                }
-
-                @Override
-                public void onError(Throwable throwable) {}
-
-                @Override
-                public void onComplete() {}
-
-                @Override
-                public void close() throws IOException {}
-            };
-
-            statsCmd.exec(statisticsResultCallback);
-
-            try {
-                StopWatch stopWatch = new StopWatch();
-                stopWatch.start();
-                boolean completionInTime = dockerClient.execStartCmd(execId)
-                        .exec(execStartResultCallback)
-                        .awaitCompletion(CommonConstant.TIME_OUT, TimeUnit.MILLISECONDS); // 超时限制
-                stopWatch.stop();
-                if (!completionInTime){
-                    // 超时退出
-                    log.info("process terminated due to timeout");
-                    outputs.add("process terminated due to timeout");
-                }
-
-                // 等待内存统计完成
-                Thread.sleep(1000);  // 增加一个短暂的等待时间，确保统计回调能及时处理数据
-
-                executeInfo.setTime(stopWatch.getLastTaskTimeMillis());
-                executeInfo.setMemory(maxMemoryUsage[0] / 8 / 1024);
-                executeInfos.add(executeInfo);
-
-            } catch (InterruptedException e) {
-                log.error("The program execution is abnormal，{}", e.getStackTrace());
-                throw new RuntimeException(e);
-            } finally {
-                statsCmd.close();
             }
         }
         return RunCodeMessage.builder()

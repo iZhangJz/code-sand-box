@@ -11,9 +11,9 @@ public interface FileConstant {
     String GLOBAL_CODE_DIR_NAME = "usercode";
 
     /**
-     * Java 语言文件名
+     * 代码文件名
      */
-    String JAVA_FILE_NAME = "Main.java";
+    String FILE_NAME = "Main.";
 
     /**
      * 编码格式常量 GBK

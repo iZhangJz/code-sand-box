@@ -19,8 +19,4 @@ public class PreRunMessage {
      */
     private String reason;
 
-    /**
-     * 前置准备数据
-     */
-    private Object data;
 }
